@@ -1,0 +1,14 @@
+{
+  "name": "PlantVerse | جهان‌گیاه",
+  "short_name": "PlantVerse",
+  "description": "پلتفرم جامع شناسایی، مراقبت و کشت گیاهان با هوش مصنوعی",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF7F0",
+  "theme_color": "#1E3D2B",
+  "dir": "rtl",
+  "lang": "fa",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

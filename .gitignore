@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+next-env.d.ts.bak
+
+# local db artifacts (schema lives in prisma/, data is seeded via scripts/seed.ts)
+db/*.db-journal
+
+# logs
+dev.log
+*.log
+!scripts/**/*.log
+
+# ephemeral test-runner working dir (runner.sh is mirrored in scripts/)
+.tmp-r47/
+
+# os junk
+.DS_Store
+Thumbs.db
+
+# sandbox skill system docs (environment tooling, not app source)
+skills/
+tsconfig.tsbuildinfo
