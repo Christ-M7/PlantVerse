@@ -1,0 +1,573 @@
+// PlantVerse — Domain Data Model (DDD-aligned)
+// Plant Aggregate • Garden/Care Context • Community Context • Commerce Context
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Plant Catalog Aggregate ────────────────────────────────────────────────
+
+model Plant {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  nameFa         String
+  nameEn         String
+  scientificName String
+  commonNamesFa  String   @default("[]") // JSON string[]
+  commonNamesEn  String   @default("[]")
+  familyFa       String   @default("")
+  familyEn       String   @default("")
+  category       String // apartment | outdoor | medicinal | aquatic | mushroom | agricultural
+  difficulty     String // easy | medium | hard
+  light          String // low | medium | bright_indirect | direct
+  water          String // low | medium | high
+  humidity       String // low | medium | high
+  tempMin        Int      @default(18)
+  tempMax        Int      @default(26)
+  careLevel      Int      @default(3) // 1..5
+  toxicity       String   @default("safe") // safe | mild | toxic
+  toxicityNoteFa String   @default("")
+  toxicityNoteEn String   @default("")
+  seasons        String   @default("[]") // JSON string[]
+  region         String   @default("")
+  growthStages   String   @default("[]") // JSON GrowthStage[]
+  descFa         String   @default("")
+  descEn         String   @default("")
+  image          String   @default("")
+  lightDescFa    String   @default("")
+  lightDescEn    String   @default("")
+  waterDescFa    String   @default("")
+  waterDescEn    String   @default("")
+  humidityDescFa String   @default("")
+  humidityDescEn String   @default("")
+  dailyCareFa    String   @default("[]")
+  dailyCareEn    String   @default("[]")
+  diseases       String   @default("[]")
+  propagation    String   @default("[]")
+  historyFa      String   @default("")
+  historyEn      String   @default("")
+  funFactFa      String   @default("")
+  funFactEn      String   @default("")
+  views          Int      @default(0)
+  favorites      Int      @default(0)
+  featured       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+}
+
+// ─── Garden / Care Context ──────────────────────────────────────────────────
+
+model GardenPlant {
+  id             String   @id @default(cuid())
+  nickname       String
+  plantSlug      String
+  health         Int      @default(90)
+  healthLabelFa  String   @default("سلامت عالی")
+  healthLabelEn  String   @default("Excellent")
+  statusFa       String   @default("عالی")
+  statusEn       String   @default("excellent") // excellent | good | medium | low
+  nextTaskType   String   @default("water") // water | fertilize | prune | spray
+  nextTaskFa     String   @default("")
+  nextTaskEn     String   @default("")
+  nextTaskDays   Int      @default(3)
+  noteFa         String   @default("")
+  noteEn         String   @default("")
+  createdAt      DateTime @default(now())
+}
+
+/**
+ * Health time-series for garden plants. Every mutation of GardenPlant.health
+ * (creation, completed care task, manual adjust) appends one row; the first
+ * GET of /api/garden/health-history lazily materializes a deterministic
+ * seeded backfill (source="backfill") ending exactly at the current health,
+ * so the trend chart is meaningful on first open. Pruned never — the series
+ * is small (≤ a few points per plant per week).
+ */
+model GardenHealthLog {
+  id         String   @id @default(cuid())
+  plantId    String // GardenPlant.id (no FK — garden rows are deletable freely)
+  health     Int // 0..100 snapshot after the mutation
+  source     String   @default("system") // create | task | manual | backfill
+  recordedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([plantId, recordedAt])
+}
+
+model CareEvent {
+  id            String   @id @default(cuid())
+  type          String // water | fertilize | prune | spray
+  titleFa       String
+  titleEn       String
+  plantNamesFa  String   @default("")
+  plantNamesEn  String   @default("")
+  date          String // ISO yyyy-mm-dd
+  dayOffset     Int      @default(0)
+  done          Boolean  @default(false)
+  repeatDays    Int      @default(0) // 0 = one-time; N > 0 → recurring rule
+  seriesId      String   @default("") // "" = one-time/legacy; shared id linking every occurrence of one recurrence rule
+  createdAt     DateTime @default(now())
+
+  @@index([seriesId])
+  /**
+   * date is the hot filter of every read path: the notification hub runs
+   * two finds + two counts on (done, date) per bell open, the reminders
+   * calendar range-scans by date, and the streak engine scans done dates.
+   * SQLite does not auto-index non-unique columns — without this index
+   * every bell open degenerates to a full-table scan as history accrues.
+   */
+  @@index([date])
+}
+
+// ─── Community Context ──────────────────────────────────────────────────────
+
+model CommunityPost {
+  id           String   @id @default(cuid())
+  authorName   String
+  authorRole   String   @default("")
+  authorAvatar String   @default("")
+  /**
+   * Stable viewer identity («کلید بازدیدکننده») minted in the browser's
+   * localStorage and attached to everything the viewer authors. "" marks
+   * legacy/anon rows — those keep the demo-profile (authorName) ownership
+   * fallback so pre-R39 content stays owned by the demo persona.
+   */
+  authorKey    String   @default("")
+  verified     Boolean  @default(false)
+  timeAgoFa    String   @default("")
+  timeAgoEn    String   @default("")
+  title        String
+  content      String
+  image        String   @default("")
+  category     String   @default("general") // general | question | achievement
+  likes        Int      @default(0)
+  comments     Int      @default(0)
+  shares       Int      @default(0)
+  liked        Boolean  @default(false)
+  bookmarked   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  postComments Comment[]
+
+  @@index([authorKey])
+}
+
+// ─── Comment Thread ─────────────────────────────────────────────────────
+
+model Comment {
+  id           String        @id @default(cuid())
+  postId       String
+  authorName   String
+  authorAvatar String        @default("")
+  /** same viewer identity semantics as CommunityPost.authorKey */
+  authorKey    String        @default("")
+  /** "" = top-level comment; otherwise the id of the comment being replied to */
+  parentId     String        @default("")
+  content      String
+  createdAt    DateTime      @default(now())
+  post         CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([authorKey])
+  @@index([parentId])
+  /**
+   * postId is the thread-read filter (GET ?postId=) AND the FK join column
+   * for feed/notification aggregation AND the cascade-delete scan. SQLite
+   * never auto-indexes FK columns — [postId, createdAt] serves the filter
+   * and the thread's asc ordering in one seek.
+   */
+  @@index([postId, createdAt])
+}
+
+/**
+ * Community moderation — abuse reports («گزارش تخلف»).
+ * Deduped per (postId, reporterKey) so one reporter can't spam-count a post;
+ * reporterKey derives from the client IP (demo single-user → "local").
+ * The public feed auto-hides a post once distinct reports reach
+ * COMMUNITY_HIDE_THRESHOLD — a single reporter can never censor a post.
+ */
+model PostReport {
+  id          String   @id @default(cuid())
+  postId      String
+  reporterKey String   @default("local")
+  reason      String // spam | inappropriate | misleading | other
+  note        String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@unique([postId, reporterKey])
+  @@index([postId])
+}
+
+// ─── Safety-Net Context — Automatic Undo Snapshots ──────────────────────────
+
+/**
+ * Server-side safety net («پشتیبان خودکار») — a JSON payload captured
+ * BEFORE a destructive operation so one click brings the data back.
+ * `kind` discriminates the undo path (same pattern as SharedList.kind):
+ *   "garden" → full-fidelity GardenSnapshot (restore = wipe + rebuild)
+ *   "post"   → deleted community post + its comments (restore = recreate)
+ * `itemCount` counts the primary units (garden plants / post comments)
+ * so the undo list can show honest sizes without parsing payloads.
+ * History is capped server-side (latest 12 per kind) — a safety net,
+ * not an archive.
+ */
+model Snapshot {
+  id        String   @id @default(cuid())
+  kind      String // garden | post
+  reason    String   @default("manual") // replace_restore | pre_undo | post_delete | manual
+  label     String   @default("") // short human-facing hint (fa, ≤ 60 chars)
+  itemCount Int      @default(0)
+  payload   String // JSON (GardenSnapshot | { post, comments })
+  createdAt DateTime @default(now())
+
+  @@index([kind, createdAt])
+}
+
+// ─── Commerce Context ───────────────────────────────────────────────────────
+
+model Product {
+  id             String   @id @default(cuid())
+  nameFa         String
+  nameEn         String
+  scientificName String   @default("")
+  category       String // seeds | seedling | mushroom | fertilizer | tools | plants
+  price          Int
+  unitFa         String   @default("تومان")
+  unitEn         String   @default("Toman")
+  badgeFa        String   @default("")
+  badgeEn        String   @default("")
+  descFa         String   @default("")
+  descEn         String   @default("")
+  rating         Float    @default(4.5)
+  reviews        Int      @default(0)
+  organic        Boolean  @default(false)
+  rare           Boolean  @default(false)
+  medicinal      Boolean  @default(false)
+  image          String   @default("")
+  createdAt      DateTime @default(now())
+}
+
+// ─── Commerce Context — Orders ──────────────────────────────────────────────
+
+model Order {
+  id            String   @id @default(cuid())
+  code          String   @unique // human-readable tracking code, e.g. PV-8F3K2Q
+  customerName  String
+  phone         String
+  province      String
+  city          String
+  address       String
+  postalCode    String   @default("")
+  note          String   @default("")
+  items         String   @default("[]") // JSON OrderItem[] {nameFa,nameEn,price,qty,image}
+  subtotal      Int
+  shippingCost  Int      @default(0)
+  discount      Int      @default(0)
+  total         Int
+  paymentMethod String   @default("gateway") // gateway | cod
+  couponCode    String   @default("")
+  status        String   @default("paid") // paid | preparing | shipped | delivered | cancelled
+  createdAt     DateTime @default(now())
+
+  /** every read (history list, notification week-window, tracking lookup)
+      orders or range-filters by createdAt — newest-first is the access
+      pattern of the whole commerce read path. */
+  @@index([createdAt])
+}
+
+// ─── Commerce Context — Address Book ────────────────────────────────────────
+
+/**
+ * Reusable shipping address. A single-user experience: addresses are shared
+ * across orders so checkout can pick a saved one instead of re-typing.
+ * Business rules mirror /api/addresses: max 10 rows, exactly one isDefault.
+ */
+model Address {
+  id           String   @id @default(cuid())
+  label        String   @default("") // friendly tag, e.g. «خانه» / «محل کار»
+  customerName String
+  phone        String // normalized 09xxxxxxxxx
+  province     String
+  city         String
+  address      String
+  postalCode   String   @default("")
+  note         String   @default("")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ─── Greenhouse / IoT Context ───────────────────────────────────────────────
+
+/**
+ * Smart-greenhouse IoT simulation. A single-user experience, so every table is
+ * global (no user relation). The server is authoritative: each lazy "tick"
+ * produces one SensorReading per metric, evaluates AutomationRules (when
+ * autopilot is engaged) and appends bilingual entries to the activity log.
+ */
+
+/** Global singleton — autopilot master switch. */
+model GhState {
+  id        String   @id @default("singleton")
+  autopilot Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+}
+
+/** Actuator state, one row per device key (heater | fan | mister | growlight | irrigation). */
+model GhDevice {
+  id        String   @id // device key
+  isOn      Boolean  @default(false)
+  source    String   @default("manual") // manual | autopilot | rule
+  updatedAt DateTime @updatedAt
+}
+
+/** Time-series sensor readings — pruned to the most recent window. */
+model GhReading {
+  id         String   @id @default(cuid())
+  metric     String // temp | hum | light | soil
+  value      Float
+  recordedAt DateTime @default(now())
+  @@index([metric, recordedAt])
+}
+
+/**
+ * Threshold automation: "when <metric> goes <above|below> <threshold>,
+ * turn <device> <on|off>". Evaluated in createdAt order; the last matching
+ * rule for a device wins.
+ */
+model GhRule {
+  id         String   @id @default(cuid())
+  metric     String // temp | hum | light | soil
+  comparator String // above | below
+  threshold  Float
+  device     String // device key
+  turnOn     Boolean  @default(true)
+  enabled    Boolean  @default(true)
+  builtin    Boolean  @default(false) // seeded hysteresis pair — the custom limit ignores these
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/** Bilingual activity feed — rule firings, manual overrides, autopilot changes, band alerts. */
+model GhLog {
+  id        String   @id @default(cuid())
+  kind      String // rule | device | autopilot | alert
+  device    String   @default("")
+  messageFa String
+  messageEn String
+  meta      String   @default("{}") // JSON {metric?, dir?, threshold?, comparator?}
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+}
+
+// ─── Content Context — Magazine ─────────────────────────────────────────────
+
+model Article {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  titleFa     String
+  titleEn     String
+  excerptFa   String   @default("")
+  excerptEn   String   @default("")
+  contentFa   String   @default("[]") // JSON ArticleSection[] {heading, body[], tip?}
+  contentEn   String   @default("[]")
+  tagsFa      String   @default("[]") // JSON string[] — topic chips
+  tagsEn      String   @default("[]") // JSON string[]
+  gallery     String   @default("[]") // JSON string[] — extra images beyond the cover
+  category    String   @default("apartment")
+  image       String   @default("")
+  readMinutes Int      @default(5)
+  views       Int      @default(0)
+  featured    Boolean  @default(false)
+  authorFa    String   @default("تحریریه جهان‌گیاه")
+  authorEn    String   @default("PlantVerse Editorial")
+  publishedAt DateTime @default(now())
+}
+
+// ─── Content Context — Shared Reading Lists ─────────────────────────────────
+
+/**
+ * A shareable snapshot of a reading list (bookmarked magazine articles).
+ * One row per share action; `code` is the public 8-char handle embedded in
+ * links as ?shared=CODE. `slugs` keeps the owner's insertion order as a JSON
+ * string[] (SQLite has no native arrays) and `views` counts link opens.
+ * `kind` discriminates the list flavour — "reading" (magazine bookmarks) or
+ * "garden" (plant snapshots) — so a code only resolves in its own importer.
+ */
+model SharedList {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  kind      String   @default("reading") // reading | garden
+  slugs     String   @default("[]") // JSON string[]
+  views     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+// ─── AI Context ─────────────────────────────────────────────────────────────
+
+model ScanRecord {
+  id             String   @id @default(cuid())
+  nameFa         String
+  nameEn         String
+  scientificName String
+  confidence     Int      @default(90)
+  careInfo       String   @default("{}")
+  image          String   @default("")
+  createdAt      DateTime @default(now())
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  session   String
+  role      String // user | assistant
+  content   String
+  createdAt DateTime @default(now())
+}
+
+// ─── Calendar Subscribe Context ─────────────────────────────────────────────
+
+/**
+ * Care-calendar subscription («اشتراک تقویم مراقبت»). One global token —
+ * the app is a single-viewer experience — that turns the one-shot ICS
+ * download into a stable subscribe-able feed URL for Google/Apple/Outlook
+ * calendar clients to poll. `hits`/`lastHitAt` expose honest usage telemetry.
+ */
+model CalendarSubscription {
+  id        String    @id @default(cuid())
+  token     String    @unique // PV-CAL-XXXXXXXXXX
+  hits      Int       @default(0)
+  lastHitAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+// ─── Community Context — Monthly Challenges ─────────────────────────────────
+
+/**
+ * A month-scoped community challenge («چالش‌های ماهانه»). One row per
+ * challenge per calendar month — `key` is the deterministic idempotent-seed
+ * handle (`${year}-${MM}-${slug}`) so concurrent GETs converge on the same
+ * rows instead of duplicating. `goal`/`unitFa`/`unitEn` drive the progress
+ * bar and localized unit labels; joining is tracked in ChallengeJoin.
+ */
+model Challenge {
+  id      String          @id @default(cuid())
+  key     String          @unique
+  titleFa String
+  titleEn String
+  descFa  String
+  descEn  String
+  emoji   String          @default("🌱")
+  goal    Int
+  unitFa  String
+  unitEn  String
+  year    Int // Gregorian year of the challenge month (display via jalali)
+  month   Int // 1..12
+  joins   ChallengeJoin[]
+  createdAt DateTime      @default(now())
+}
+
+/**
+ * One membership row per (challenge, viewer). `@@unique` makes join/progress
+ * idempotent under upsert; `progress` is clamped to [0, goal] by the API.
+ * Rank = progress DESC, updatedAt ASC (first to reach wins ties).
+ */
+model ChallengeJoin {
+  id          String    @id @default(cuid())
+  challengeId String
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  viewerKey   String
+  name        String
+  progress    Int       @default(0)
+  joinedAt    DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([challengeId, viewerKey])
+  @@index([challengeId, progress])
+}
+
+// ─── Community Context — Expert Groups ──────────────────────────────────────
+
+/**
+ * A topical discussion group («گروه‌های تخصصی»). One row per group — `key`
+ * is the deterministic idempotent-seed handle from the code catalogue so
+ * concurrent GETs converge on the same rows instead of duplicating.
+ * Membership lives in GroupMember, chat history in GroupMessage.
+ */
+model ExpertGroup {
+  id        String         @id @default(cuid())
+  key       String         @unique
+  titleFa   String
+  titleEn   String
+  descFa    String
+  descEn    String
+  emoji     String         @default("👥")
+  members   GroupMember[]
+  messages  GroupMessage[]
+  createdAt DateTime       @default(now())
+}
+
+/**
+ * One membership row per (group, viewer). `@@unique` makes join idempotent
+ * under upsert; posting requires membership — the API rejects messages from
+ * non-members with 404 not_joined.
+ */
+model GroupMember {
+  id        String      @id @default(cuid())
+  groupId   String
+  group     ExpertGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  viewerKey String
+  name      String
+  joinedAt  DateTime    @default(now())
+
+  @@unique([groupId, viewerKey])
+  @@index([viewerKey])
+}
+
+/**
+ * A short chat-style message inside a group. Body is trimmed and clamped to
+ * 1..280 chars by the API (400 too_short / too_long). The thread read path
+ * orders by createdAt ASC and is served by the composite index.
+ */
+model GroupMessage {
+  id        String      @id @default(cuid())
+  groupId   String
+  group     ExpertGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  viewerKey String
+  name      String
+  body      String
+  createdAt DateTime    @default(now())
+
+  @@index([groupId, createdAt])
+}
+
+// ─── Encyclopedia Context — Medicinal Herb Profiles ─────────────────────────
+
+/**
+ * Curated medicinal profile («باغ گیاهان دارویی») for plants whose
+ * `category` is "medicinal". One row per Plant.slug — `plantSlug` is
+ * unique and seeded idempotently from the code catalogue on GET, so
+ * content is version-controlled while storage stays queryable. List
+ * fields are JSON-encoded (SQLite has no arrays): uses/actives/cautions
+ * are string[], preparations is {titleFa,titleEn,bodyFa,bodyEn}[]. The
+ * API enriches rows with the live Plant row and the single-viewer
+ * garden membership (`inGarden`). Cautions are safety copy — they must
+ * never render empty (pinned in tests).
+ */
+model HerbProfile {
+  id           String   @id @default(cuid())
+  plantSlug    String   @unique // matches Plant.slug
+  emoji        String   @default("🌿")
+  taglineFa    String
+  taglineEn    String
+  usesFa       String   @default("[]") // JSON string[]
+  usesEn       String   @default("[]")
+  activesFa    String   @default("[]") // JSON string[]
+  activesEn    String   @default("[]")
+  preparations String   @default("[]") // JSON {titleFa,titleEn,bodyFa,bodyEn}[]
+  cautionsFa   String   @default("[]")
+  cautionsEn   String   @default("[]")
+  teaSafe      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
